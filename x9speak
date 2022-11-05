@@ -1,0 +1,103 @@
+#!/bin/bash
+
+##	Purpose: Read what's in the clipboard aloud.
+##	Args:
+##		1 [optional]: Text to read (reads from clipboard otherwise).
+##	Copyright and license:
+##		Copyright (c) 2022 t00mietum.
+##		License GPLv3+: GNU GPL version 3 or later, full text at:
+##		    https://www.gnu.org/licenses/gpl-3.0.en.html
+##		There is no warranty, to the extent permitted by law.
+##	History:
+##		20221005 t00mietum:
+##			Created based on this Reddit question:
+##			https://www.reddit.com/r/linuxquestions/comments/ymqcpc/is_there_a_way_to_make_mimic3_read_stuff_from_my/
+
+function fMain(){
+
+	## Args
+	local readText="$1"
+
+	## Constants
+	local -r scriptName="$(basename "${0}")"
+	local    tmpBase="$(mktemp -d -u)"
+	local -r tmpWav="${tmpBase}.wav"
+	local -r tmpMp3="${tmpBase}.mp3"
+	tmpBase=
+
+	## Validate dependencies
+	[[ -z "$(which     pip     2>/dev/null || true)" ]] && fThrowError "${FUNCNAME[0]}" "Python and pip needs to be installed for this to work."
+	[[ -z "$(which     ffmpeg  2>/dev/null || true)" ]] && fThrowError "${FUNCNAME[0]}" "ffmpeg needs to be installed for this to work."
+	[[ -z "$(which     mktemp  2>/dev/null || true)" ]] && fThrowError "${FUNCNAME[0]}" "mktemp needs to be installed for this to work."
+	if [[ -z "$(which  mimic3  2>/dev/null || true)" ]]; then
+		echo
+		echo "mimic3 needs to be installed for this to work."
+		echo "Visit https://mycroft-ai.gitbook.io/docs/mycroft-technologies/mimic-tts/mimic-3#installation"
+		echo "or just try:"
+		echo "pip install --upgrade pip"
+		echo "pip install mycroft-mimic3-tts"
+		echo
+		exit 1
+	fi
+
+	## Help
+	case "${readText,,}" in
+		"-h"|"--help")
+			echo
+			echo "Reads text with a spoken voice."
+			echo "Text comes from the command line, or if not there, the clipboard."
+			echo
+			exit 1
+			;;
+	esac
+
+	## Get clipboard text if necessary
+	if [[ -z "${readText}" ]]; then
+		readText="$(xclip -o)"
+	fi
+
+	## Strip off leading/trailing whitespace & make read-only
+	local -r readText="$(echo -e "${readText}" | sed 's/^[[:blank:]]*//;s/[[:blank:]]*$//' 2>/dev/null || true)"
+
+	## Validate
+	if [[ -z "${readText}" ]]; then
+		fThrowError "${FUNCNAME[0]}" "Ain't nothing to read, really."
+	fi
+
+	## Read to WAV
+	echo "[ Converting text to speech ... ]"
+#	(mimic3 "${readText}" 1> /dev/null) > "${tmpWav}"
+	(mimic3 "${readText}" > "${tmpWav}") &> /dev/null
+
+	## Convert to MP3 and delete WAV
+	echo "[ Converting output to mp3 ... ]"
+	ffmpeg -i "${tmpWav}" -acodec mp3 -ab 256k "${tmpMp3}" &> /dev/null
+	rm "${tmpWav}"
+
+	## Open audio player (and hide console output)
+	echo "[ Opening "${tmpMp3}" with default audio player ... ]"
+	(nohup xdg-open "${tmpMp3}" & disown) &> /dev/null
+
+## Note: If you want to be able to automatically delete the MP3 in this script after playing,
+##       you'll need to launch an explicit audio player and wait for it to close,
+##       like this, otherwise tmp files will build up until reboot:
+# 	vlc "${tmpMp3}" &> /dev/null
+# 	echo "[ Cleaning up ... ]"
+#	rm "${tmpMp3}"
+
+	echo "[ Done. ]"
+	echo
+
+}
+
+function fThrowError(){
+	local -r funcName="$1"
+	local -r errText="$2"
+	echo
+	echo "Error in '${scriptName}.${funcName}()': ${errText}"
+	echo
+	exit 1
+}
+
+set -e
+fMain "$1" "$2"
